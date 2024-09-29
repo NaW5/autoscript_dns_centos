@@ -216,7 +216,7 @@ fw_zone() {
 	fi
 	
 	rev_zone "$mode" "$reverse_zone" "$zone_prefix" "$zone_ip" "$name_server" "$admin_server"
-	
+	systemctl restart network
 	systemctl start named > /dev/null 2>&1
 	systemctl restart named > /dev/null 2>&1
 }
@@ -277,6 +277,9 @@ rev_zone() {
 			fi
 		} >> "/var/named/${re_rec}"
 	fi
+	systemctl restart network
+	systemctl start named > /dev/null 2>&1
+	systemctl restart named > /dev/null 2>&1
 }
 
 zone_setup() 
@@ -317,28 +320,14 @@ backup_setup()
 		fi
 	done
 
-	if [[ $type == 2 ]]; then
-		local backup_prefix=$(ip_to_prefix_length "$trans_ip")
-		local -a octets
-		IFS='.' read -r -a octets <<< "$trans_ip"
-		local reverse_backup
-
-		if [[ "$backup_prefix" -le 8 ]]; then
-			reverse_backup="${octets[0]}.in-addr.arpa"
-		elif [[ "$backup_prefix" -le 16 ]]; then
-			reverse_backup="${octets[1]}.${octets[0]}.in-addr.arpa"
-		elif [[ "$backup_prefix" -le 24 ]]; then
-			reverse_backup="${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
-		else
-			reverse_backup="${octets[3]}.${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
-		fi
-		rev_zone "2" "$reverse_backup" "$backup_prefix" "$trans_ip" "backup" "admin_backup" "0"
+	if [[ $type == 3 ]]; then
+		
 		if [ ! -f ~/.ssh/id_rsa ]; then
 	    	ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -q -N "" > /dev/null 2>&1
 		fi
 		ssh-copy-id root@"$trans_ip" > /dev/null 2>&1
-		scp /etc/named.rfc1912.zones root@"$trans_ip":/etc/named.rfc1912.zones > /dev/null 2>&1
-	else
+		scp root@"$trans_ip":/etc/named.rfc1912.zones /etc/named.rfc1912.zones > /dev/null 2>&1
+		zones=$(get_zones)
 		pattern="/zone.*${reverse_backup}/,/^}/"
 		sed -i -e "${pattern} {s|type .*;|type slave;|}" \
 				-e "${pattern} {s|file[^\"]*\"|file \"slaves/|}" \
@@ -351,39 +340,7 @@ backup_setup()
 	else
 		sed -i "/allow-query.*};/s|};|};\n\tallow-transfer { localhost; ${trans_ip}; };\n|" $named
 	fi
-	zones=$(get_zones)
-	for backup_zone in $zones; do
-		if [[ $type == 2 ]]; then
-			zone_rec=$(zone_file "${backup_zone}" "${namedrfc}")
-			re_rec="rev.$(ipcalc -n "${trans_ip}/${backup_prefix}" | awk -F'=' '{print $2}')"
-			{
-				echo "@	IN	NS		backup.${backup_zone}."
-				echo "backup	IN	A		${trans_ip}"
-			} >> "/var/named/${zone_rec}"
-
-			local reverse_ip="${octets[3]}.${octets[2]}.${octets[1]}.${octets[0]}"
-			local extracted_ip="${reverse_backup//.in-addr.arpa/}"
-			{
-				echo "@	IN	NS	backup.${backup_zone}."
-				echo "${reverse_ip//.${extracted_ip}}	IN	PTR	backup.${backup_zone}."
-
-			} >> "/var/named/${re_rec}"
-
-			# Nếu chuyển từ backup -> primary
-			pattern="/zone.*${backup_zone}/,/^}/"
-			sed -i -e "${pattern} {s|type .*;|type master;|}" \
-				   -e "${pattern} {s|file .*\"slaves/|file \"|}" \
-				   -e "${pattern} {s|masters .*};|allow-update { none; };|}" $namedrfc
-
-		elif [[ $type == 3 ]]; then
-			# Măc định cấu hình cho primary, chuyển về backup
-			pattern="/zone.*${backup_zone}/,/^}/"
-			sed -i -e "${pattern} {s|type .*;|type slave;|}" \
-					-e "${pattern} {s|file[^\"]*\"|file \"slaves/|}" \
-					-e "${pattern} {s|allow-update .*};|masters {${trans_ip};};|}" $namedrfc
-		fi
-	done
-	
+	systemctl start named > /dev/null 2>&1
 	systemctl restart named > /dev/null 2>&1
 }
 
@@ -491,3 +448,4 @@ ip_check()
 }
 
 prompt
+nmcli radio wifi on
