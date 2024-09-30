@@ -24,6 +24,8 @@ chmod +x autoscript.sh
 ```
 
 ## Thực thi    
+### Để thuận tiện cho việc cấu hình trên VMWare ta cấu hình mạng lại như sau:
+![alt text](mnnet1.png)
 ### Chạy file và cấu hình theo prompt.
 ```
 ./autoscript.sh
@@ -32,6 +34,7 @@ chmod +x autoscript.sh
 
 # Note
 ### Khi gặp lỗi hoặc muốn khôi phục cài đặt DNS về mặc định ta chạy lệnh:
+> Chỉnh mạng về NAT để có internet [như trên](#trước-khi-dùng-lệnh-yum-để-cài-gói-bất-ki-cần-chỉnh)
 ```
 curl -sSL https://raw.githubusercontent.com/NaW5/autoscript_dns_centos/refs/heads/main/recovery.sh | bash
 ```
