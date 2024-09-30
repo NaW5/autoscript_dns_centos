@@ -5,24 +5,26 @@ if [ -z "$interface" ]; then
 	echo "Không tìm thấy network interface. Vui lòng cài đặt lại cấu hình mạng."
 	exit 1
 fi
-if ! rpm -q bind bind-utils > /dev/null 2>&1; then
-	echo "Gói bind chưa cài đặt, cài đặt gói bind..."
-	sed -i -e "/^mirrorlist/d;/^#baseurl=/{s,^#,,;s,/mirror,/vault,;}" /etc/yum.repos.d/CentOS*.repo
-	yum update -y && yum install bind bind-utils -y
+# if ! rpm -q bind bind-utils > /dev/null 2>&1; then
+# 	echo "Gói bind chưa cài đặt, cài đặt gói bind..."
+# 	sed -i -e "/^mirrorlist/d;/^#baseurl=/{s,^#,,;s,/mirror,/vault,;}" /etc/yum.repos.d/CentOS*.repo
+# 	yum update -y && yum install bind bind-utils -y
 	
-	while [ ! -f /etc/named.conf ]; do
-		sleep 1
-		echo "Đợi gói bind khởi tạo file..."
-	done
-	clear
-elif ! yum check-update bind bind-utils > /dev/null 2>&1; then
-	echo "Gói bind chưa được cập nhật. Cập nhật gói bind..."
-	yum update -y
-fi
+# 	while [ ! -f /etc/named.conf ]; do
+# 		sleep 1
+# 		echo "Đợi gói bind khởi tạo file..."
+# 	done
+# 	clear
+# elif ! yum check-update bind bind-utils > /dev/null 2>&1; then
+# 	echo "Gói bind chưa được cập nhật. Cập nhật gói bind..."
+# 	yum update -y
+# fi
 # Lưu các file cần tùy chỉnh
 ifcfg="/etc/sysconfig/network-scripts/ifcfg-${interface}"
 named="/etc/named.conf"
 namedrfc="/etc/named.rfc1912.zones"
+chmod 644 "$named"
+chmod 644 "$namedrfc"
 # Backup file.
 cp "$ifcfg" "${ifcfg}.bak"
 cp "$named" "${named}.bak"
