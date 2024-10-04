@@ -144,7 +144,7 @@ ip_setup()
 		fi
 	else
 		sed -i -e "s/^BOOTPROTO=.*$/BOOTPROTO=dhcp/" \
-				  -e "/^DNS1\|^IPADDR\|^GATEWAY\|^PREFIX/d" "$ifcfg"
+		  	-e "/^DNS1\|^IPADDR\|^GATEWAY\|^PREFIX/d" "$ifcfg"
 	fi
 	#Khởi động lại dịch vụ network
 	systemctl restart network
@@ -157,6 +157,10 @@ fw_zone() {
 	read -p "Nhập tên miền cần quản lý: " fw_dom
 	if grep -q "${fw_dom}" "$namedrfc"; then
 		echo "Zone ${fw_dom} đã tồn tại."
+		read -p "Bạn có muốn cập nhật địa chỉ IP của zone ${fw_dom}? (y/n): " choice
+		if [[ $choice == "y" ]]; then
+			update_zone "$fw_dom"
+		fi
 		return
 	fi
 	fw_rec="forward.${fw_dom}"
@@ -203,21 +207,7 @@ fw_zone() {
 		} >> "/var/named/${fw_rec}"
 	fi
 	
-	local -a octets
-	IFS='.' read -r -a octets <<< "$zone_ip"
-	local reverse_zone
-	
-	if [[ "$zone_prefix" -le 8 ]]; then
-		reverse_zone="${octets[0]}.in-addr.arpa"
-	elif [[ "$zone_prefix" -le 16 ]]; then
-		reverse_zone="${octets[1]}.${octets[0]}.in-addr.arpa"
-	elif [[ "$zone_prefix" -le 24 ]]; then
-		reverse_zone="${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
-	else
-		reverse_zone="${octets[3]}.${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
-	fi
-	
-	rev_zone "$mode" "$fw_dom" "$reverse_zone" "$zone_prefix" "$zone_ip" "$name_server" "$admin_server"
+	rev_zone "$mode" "$fw_dom" "$zone_prefix" "$zone_ip" "$name_server" "$admin_server"
 	
 	systemctl start named > /dev/null 2>&1
 	systemctl restart named > /dev/null 2>&1
@@ -226,12 +216,27 @@ fw_zone() {
 rev_zone() {
 	local mode="$1"
 	local fw_dom="$2"
-	local re_zone="$3"
-	local zone_prefix="$4"
-	local zone_ip="$5"
-	local name_server="$6"
-	local admin_server="$7"
-	local backup_exclusive="$8"
+	local zone_prefix="$3"
+	local zone_ip="$4"
+	local name_server="$5"
+	local admin_server="$6"
+	local backup_exclusive="$7"
+
+	local re_zone
+	local -a octets
+	IFS='.' read -r -a octets <<< "$zone_ip"
+	
+	if [[ "$zone_prefix" -le 8 ]]; then
+		re_zone="${octets[0]}.in-addr.arpa"
+	elif [[ "$zone_prefix" -le 16 ]]; then
+		re_zone="${octets[1]}.${octets[0]}.in-addr.arpa"
+	elif [[ "$zone_prefix" -le 24 ]]; then
+		re_zone="${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
+	else
+		re_zone="${octets[3]}.${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
+	fi
+
+
 		
 	re_rec="rev.$(ipcalc -n "${zone_ip}/${zone_prefix}" | awk -F'=' '{print $2}')"
 	if ! grep -qE "zone[[:space:]]*\"${re_zone}\"" "$namedrfc"; then
@@ -285,9 +290,6 @@ rev_zone() {
 zone_setup() 
 {
 	local type="$1"
-	if [[ "$type" == 3 ]]; then
-		echo "Nhập các zone tương ứng với primary server."
-	fi
 	while true; do
 		fw_zone "$type"
 		read -p "Tiếp tục khai báo zone ? (y/n): " choice
@@ -328,22 +330,13 @@ backup_setup()
 
 	if [[ "$type" == 2 ]]; then
 		local backup_prefix=$(ip_to_prefix_length "$trans_ip")
-		local -a octets
-		IFS='.' read -r -a octets <<< "$trans_ip"
-		local reverse_backup
-
-		if [[ "$backup_prefix" -le 8 ]]; then
-			reverse_backup="${octets[0]}.in-addr.arpa"
-		elif [[ "$backup_prefix" -le 16 ]]; then
-			reverse_backup="${octets[1]}.${octets[0]}.in-addr.arpa"
-		elif [[ "$backup_prefix" -le 24 ]]; then
-			reverse_backup="${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
-		else
-			reverse_backup="${octets[3]}.${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
-		fi
-		
-		local primary_holder=(echo ${numbers[1]})
-		rev_zone "2" "$primary_holder" "$reverse_backup" "$backup_prefix" "$trans_ip" "backup" "admin_backup" "0"
+		for zone in $zones; do
+			if [[ ! $zone == *"in-addr.arpa" ]]; then
+				local primary_holder="$zone"
+				break
+			fi
+		done
+		rev_zone "2" "$primary_holder" "$backup_prefix" "$trans_ip" "backup" "admin_backup" "0"
 	fi
 	
 	
@@ -497,6 +490,76 @@ ip_check()
 		fi
 	fi
 	return 1
+}
+
+update_zone()
+{
+	local do="$1"
+	local new_ip
+
+	
+	
+	# Cập nhật file forward record
+	while true; do
+		read -p "Nhập địa chỉ IP muốn cập nhật: " new_ip
+		if ! ip_check "$new_ip"; then
+			echo "IP không hợp lệ. Vui lòng nhập lại."
+		else
+			break
+		fi
+	done
+	
+	local zone_rec=$(zone_file "$do" "$namedrfc")
+    local old_ip=$(grep -E "^@[[:space:]]+.*IN[[:space:]]+A" "/var/named/$zone_rec" | awk '{print $NF}')
+	sed -i "s|${old_ip}|${new_ip}|" "/var/named/$zone_rec"
+
+	local old_prefix=$(ip_to_prefix_length "$old_ip")
+	local new_prefix=$(ip_to_prefix_length "$new_ip")
+
+	local old_rev_rec="rev.$(ipcalc -n "${old_ip}/${old_prefix}" | awk -F'=' '{print $2}')"
+
+	if [[ $(ipcalc -n "${new_ip}/${new_prefix}" | awk -F'=' '{print $2}') == $(ipcalc -n "${old_ip}/${old_prefix}" | awk -F'=' '{print $2}') ]]; then
+		sed -i "s|${old_ip}|${new_ip}|" "/var/named/$old_rev_rec"
+	else
+		rev_zone "2" "$do" "$new_prefix" "$new_ip" "server" "root"
+		if grep -q "SOA.*${do}" "/var/named/$old_rev_rec"; then
+			sed -i -e "/@.*SOA/,/^)/d" \
+				-e "/$do/d" "/var/named/$old_rev_rec"
+			local NS_RECORDS=$(grep -E "IN[[:space:]]+NS" "/var/named/$old_rev_rec")
+			if [[ -n "$NS_RECORDS" ]]; then
+				local PRIMARY_NS=$(echo "$NS_RECORDS" | awk '{print $4}' | head -n 1)
+              sed -i "2i\
+    @ IN SOA $PRIMARY_NS root.${PRIMARY_NS#*.} ( \\
+    $(date +%Y%m%d01)	;Serial \\
+    3600	;Refresh \\
+    1800	;Retry \\
+    604800	;Expire \\
+    86400	;Minimum TTL \\
+) \\
+	            " "/var/named/$old_rev_rec"
+             else 
+             	rm "/var/named/${old_rev_rec}"
+             	local re_zone
+				local -a octets
+				IFS='.' read -r -a octets <<< "$old_ip"
+				
+				if [[ "$old_prefix" -le 8 ]]; then
+					re_zone="${octets[0]}.in-addr.arpa"
+				elif [[ "$old_prefix" -le 16 ]]; then
+					re_zone="${octets[1]}.${octets[0]}.in-addr.arpa"
+				elif [[ "$old_prefix" -le 24 ]]; then
+					re_zone="${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
+				else
+					re_zone="${octets[3]}.${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa"
+				fi
+				sed -i "/zone.*${re_zone}/,/^}/d" "$namedrfc"
+			fi
+		else
+			sed -i -e "/$do/d" "/var/named/$old_rev_rec"
+		fi
+
+	fi
+	systemctl restart named
 }
 
 prompt
